@@ -1,0 +1,97 @@
+@startuml bpmn_delivery_end_to_end
+' =====================================================================
+'  BPMN-style сквозной процесс доставки заказа маркетплейса.
+'  Реализован как Activity Diagram со swimlanes (пулы/дорожки),
+'  т.к. это нативно и без ошибок рендерится в PlantUML.
+'  Дорожки = роли/системы (lanes внутри пулов).
+' =====================================================================
+title Сквозной бизнес-процесс доставки заказа (BPMN)
+
+skinparam backgroundColor #FFFFFF
+skinparam shadowing false
+skinparam ActivityBackgroundColor #EAF2FB
+skinparam ActivityBorderColor #2C6FB5
+skinparam ActivityDiamondBackgroundColor #FFF6E0
+skinparam ActivityDiamondBorderColor #C8902A
+skinparam swimlaneBorderColor #999999
+skinparam swimlaneTitleBackgroundColor #F0F0F0
+
+|#FDF1F1|Покупатель|
+start
+:Добавляет товары в корзину;
+:Указывает адрес/город доставки;
+
+|#EAF2FB|DOS: Расчёт|
+:Сгруппировать позиции
+по (продавец, склад);
+:Запросить тарифы у перевозчиков
+(параллельно, таймаут 600 мс);
+if (Есть доступные варианты?) then (да)
+  :Сформировать список
+  вариантов доставки;
+else (нет)
+  :Вернуть NO_DELIVERY_OPTIONS;
+  |#FDF1F1|Покупатель|
+  :Меняет адрес или товары;
+  stop
+endif
+
+|#FDF1F1|Покупатель|
+:Выбирает вариант доставки;
+:Подтверждает и оплачивает заказ;
+
+|#E8F5E9|payment-service|
+:Проводит оплату;
+:Публикует событие order.paid;
+
+|#EAF2FB|DOS: Оформление|
+:Принять команду оформления
+(Idempotency-Key);
+:Сплит заказа на отгрузки
+(по продавцу/складу/габаритам);
+:Сохранить отгрузки = PENDING
+(+ запись в Outbox);
+
+fork
+  :Создать заказ у перевозчика
+  отгрузки #1;
+fork again
+  :Создать заказ у перевозчика
+  отгрузки #2;
+end fork
+
+if (Все отгрузки созданы?) then (да)
+  :Статусы = CREATED,
+  сохранить трек-номера;
+  :Публиковать shipment.created;
+else (частичный сбой)
+  :Проблемные = CREATION_FAILED;
+  :Поставить Retry с backoff;
+  :Эскалация в поддержку;
+endif
+
+|#F3E5F5|Перевозчик|
+:Собирает и везёт посылку;
+repeat
+  :Отправляет вебхук о статусе;
+  |#EAF2FB|DOS: Трекинг|
+  :Проверить подпись + дедуп
+  по external_event_id;
+  :Смапить во внутренний статус
+  и валидировать переход;
+  :Обновить статус,
+  публиковать shipment.status_changed;
+  |#FDF1F1|Покупатель|
+  :Видит актуальный статус;
+  |#F3E5F5|Перевозчик|
+repeat while (Доставлено?) is (нет) not (да)
+
+|#FDF1F1|Покупатель|
+:Получает заказ в ПВЗ / у курьера;
+
+|#EAF2FB|DOS: Трекинг|
+:Статус отгрузки = DELIVERED;
+:Публиковать shipment.delivered;
+stop
+
+@enduml

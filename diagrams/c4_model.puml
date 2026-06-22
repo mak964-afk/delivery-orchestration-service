@@ -1,0 +1,86 @@
+@startuml c4_delivery
+' =====================================================================
+'  Модель C4 (уровни Context и Container) для DOS.
+'  Использует библиотеку C4-PlantUML. При оффлайн-рендере замените URL
+'  на локальные копии C4_Context.puml / C4_Container.puml.
+' =====================================================================
+!include https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/master/C4_Context.puml
+!include https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/master/C4_Container.puml
+
+LAYOUT_WITH_LEGEND()
+
+' =====================================================================
+'  УРОВЕНЬ 1 — SYSTEM CONTEXT
+' =====================================================================
+title C4 Level 1 — System Context: Delivery Orchestration Service
+
+Person(customer, "Покупатель", "Выбирает доставку, отслеживает и отменяет посылки")
+Person(merchant, "Продавец", "Задаёт склады и габариты, собирает отгрузки")
+
+System(dos, "Delivery Orchestration Service", "Расчёт, сплит, оформление и трекинг доставки заказов маркетплейса")
+
+System(order, "Order Service", "Корзина и жизненный цикл заказа")
+System(payment, "Payment Service", "Оплата и возвраты")
+System(notification, "Notification Service", "Уведомления покупателю")
+
+System_Ext(cdek, "СДЭК API", "Внешний перевозчик: тарифы, заказы, вебхуки статусов")
+System_Ext(boxberry, "Boxberry API", "Внешний перевозчик: тарифы, заказы, вебхуки статусов")
+
+Rel(customer, order, "Оформляет заказ", "HTTPS")
+Rel(merchant, dos, "Управляет складами/габаритами", "HTTPS")
+Rel(order, dos, "Расчёт и оформление доставки", "REST/JSON")
+Rel(payment, dos, "Событие order.paid", "Kafka")
+Rel(dos, payment, "Событие shipment.cancelled (триггер возврата)", "Kafka")
+Rel(dos, notification, "shipment.status_changed", "Kafka")
+Rel(dos, cdek, "Тарифы, создание/отмена заказа", "REST/JSON")
+Rel(dos, boxberry, "Тарифы, создание/отмена заказа", "REST/JSON")
+Rel(cdek, dos, "Вебхуки статусов", "HTTPS")
+Rel(boxberry, dos, "Вебхуки статусов", "HTTPS")
+
+@enduml
+
+' =====================================================================
+'  УРОВЕНЬ 2 — CONTAINER
+' =====================================================================
+@startuml c4_delivery_container
+!include https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/master/C4_Container.puml
+
+LAYOUT_WITH_LEGEND()
+title C4 Level 2 — Container: внутри Delivery Orchestration Service
+
+Person(customer, "Покупатель")
+System(order, "Order Service", "Внешний домен")
+System_Ext(cdek, "СДЭК API")
+System_Ext(boxberry, "Boxberry API")
+System(payment, "Payment Service")
+
+System_Boundary(dos, "Delivery Orchestration Service") {
+    Container(api, "Delivery API", "Java 21, Spring Boot", "REST: /calculate, /shipments, /cancel; валидация, идемпотентность")
+    Container(core, "Delivery Core (Domain)", "Java 21", "Сплит заказа, конечный автомат статусов, доменные правила")
+    Container(cdekAdapter, "CDEK Adapter (ACL)", "Java 21, Resilience4j", "Маппинг в/из СДЭК, Circuit Breaker + Retry")
+    Container(boxAdapter, "Boxberry Adapter (ACL)", "Java 21, Resilience4j", "Маппинг в/из Boxberry, Circuit Breaker + Retry")
+    Container(webhook, "Webhook Receiver", "Java 21, Spring Boot", "Приём вебхуков, проверка HMAC, дедупликация")
+    Container(publisher, "Outbox Publisher", "Java 21, Scheduler", "Читает outbox, публикует доменные события")
+    ContainerDb(db, "Delivery DB", "PostgreSQL 16", "Отгрузки, позиции, статусы, outbox, идемпотентность")
+    ContainerDb(cache, "Tariff Cache", "Redis", "Кэш тарифов, идемпотентные ключи, rate limiting")
+    ContainerQueue(kafka, "Event Bus", "Apache Kafka", "Доменные события доставки")
+}
+
+Rel(order, api, "Расчёт/оформление/отмена", "REST/JSON")
+Rel(api, core, "Делегирует доменную логику")
+Rel(core, db, "Читает/пишет отгрузки и статусы", "JDBC")
+Rel(api, cache, "Кэш тарифов, идемпотентность", "RESP")
+Rel(core, cdekAdapter, "Тарифы, заказы")
+Rel(core, boxAdapter, "Тарифы, заказы")
+Rel(cdekAdapter, cdek, "REST/JSON")
+Rel(boxAdapter, boxberry, "REST/JSON")
+Rel(cdek, webhook, "Вебхуки статусов", "HTTPS")
+Rel(boxberry, webhook, "Вебхуки статусов", "HTTPS")
+Rel(webhook, core, "Обновление статуса")
+Rel(core, db, "Запись события в Outbox", "JDBC")
+Rel(publisher, db, "Читает Outbox", "JDBC")
+Rel(publisher, kafka, "Публикует события")
+Rel(kafka, payment, "shipment.cancelled")
+Rel(customer, order, "Использует")
+
+@enduml

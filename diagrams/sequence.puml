@@ -1,0 +1,120 @@
+@startuml sequence_cancel_shipment_with_failure
+' =====================================================================
+'  Самый сложный сценарий: отмена отгрузки покупателем при сбое связи
+'  с API перевозчика. Показаны таймаут, Retry с backoff, Circuit Breaker
+'  (OPEN -> HALF_OPEN -> CLOSED) и отложенная компенсация через очередь.
+' =====================================================================
+title Sequence — Отмена отгрузки при сбое перевозчика (Timeout + Retry + Circuit Breaker)
+
+skinparam backgroundColor #FFFFFF
+skinparam shadowing false
+skinparam sequenceMessageAlign center
+skinparam ParticipantBackgroundColor #EAF2FB
+skinparam ParticipantBorderColor #2C6FB5
+
+actor "Покупатель" as Customer
+participant "Delivery API" as API
+participant "Delivery Core" as Core
+database "Delivery DB" as DB
+participant "CDEK Adapter\n(Resilience4j)" as Adapter
+participant "Circuit Breaker" as CB
+queue "Retry Queue\n(Kafka)" as RQ
+participant "СДЭК API" as Cdek
+participant "Outbox Publisher" as Pub
+queue "Event Bus" as Bus
+
+autonumber
+
+Customer -> API : POST /shipments/SHP-1/cancel\n(Idempotency-Key: K-77)
+activate API
+
+API -> DB : SELECT shipment SHP-1
+activate DB
+DB --> API : status = IN_TRANSIT
+deactivate DB
+
+alt Статус допускает отмену
+    API -> Core : cancel(SHP-1, reason=customer_request)
+    activate Core
+    Core -> DB : UPDATE SHP-1 -> CANCELLATION_PENDING
+    Core -> Adapter : cancelOrder(externalId)
+    activate Adapter
+
+    Adapter -> CB : проверить состояние
+    activate CB
+    CB --> Adapter : CLOSED (пропустить вызов)
+    deactivate CB
+
+    == Попытка 1 (таймаут) ==
+    Adapter -> Cdek : DELETE /orders/{externalId}
+    activate Cdek
+    note right of Cdek : Сеть деградировала
+    Cdek --> Adapter : timeout (> 2000 мс)
+    deactivate Cdek
+    Adapter -> CB : зафиксировать сбой
+
+    == Попытка 2 (backoff 1s, ошибка) ==
+    Adapter -> Cdek : DELETE /orders/{externalId}
+    activate Cdek
+    Cdek --> Adapter : HTTP 503
+    deactivate Cdek
+    Adapter -> CB : зафиксировать сбой
+
+    == Попытка 3 (backoff 2s, ошибка) ==
+    Adapter -> Cdek : DELETE /orders/{externalId}
+    activate Cdek
+    Cdek --> Adapter : HTTP 503
+    deactivate Cdek
+    Adapter -> CB : порог сбоев превышен
+    activate CB
+    CB --> CB : state -> OPEN
+    CB --> Adapter : OPEN (быстрый отказ)
+    deactivate CB
+
+    Adapter --> Core : CarrierUnavailableException
+    deactivate Adapter
+
+    Core -> RQ : enqueue CancelCommand(SHP-1, K-77)\nдля отложенного повтора
+    Core -> DB : сохранить попытку, статус = CANCELLATION_PENDING
+    Core --> API : ACCEPTED (отложено)
+    deactivate Core
+    API --> Customer : 202 Accepted\n"Отмена обрабатывается"
+    deactivate API
+
+    ... через интервал (cooldown), Circuit Breaker -> HALF_OPEN ...
+
+    RQ -> Core : повторная доставка CancelCommand(SHP-1)
+    activate Core
+    Core -> Adapter : cancelOrder(externalId)
+    activate Adapter
+    Adapter -> CB : проверить состояние
+    activate CB
+    CB --> Adapter : HALF_OPEN (пробный вызов)
+    deactivate CB
+    Adapter -> Cdek : DELETE /orders/{externalId}
+    activate Cdek
+    Cdek --> Adapter : 200 OK (аннулировано)
+    deactivate Cdek
+    Adapter -> CB : зафиксировать успех
+    activate CB
+    CB --> CB : state -> CLOSED
+    deactivate CB
+    Adapter --> Core : OK
+    deactivate Adapter
+
+    Core -> DB : UPDATE SHP-1 -> CANCELLED\n+ INSERT outbox(shipment.cancelled)
+    Core --> RQ : ack (сообщение обработано)
+    deactivate Core
+
+    Pub -> DB : выбрать новые outbox-записи
+    activate Pub
+    Pub -> Bus : publish shipment.cancelled\n(reason=customer_request)
+    Pub -> DB : пометить outbox отправленным
+    deactivate Pub
+    note over Bus : payment-service инициирует возврат средств
+
+else Статус не допускает отмену (DELIVERED/CANCELLED)
+    API --> Customer : 409 Conflict\nCANCELLATION_NOT_ALLOWED
+end
+
+@enduml

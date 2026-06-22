@@ -1,0 +1,198 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions
+    xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL"
+    xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI"
+    xmlns:dc="http://www.omg.org/spec/DD/20100524/DC"
+    xmlns:di="http://www.omg.org/spec/DD/20100524/DI"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    id="Definitions_DeliveryShipmentCreation"
+    targetNamespace="http://marketx.ru/delivery/bpmn">
+
+  <!-- ================================================================
+       Изолированный подпроцесс: "Создание отгрузки у перевозчика"
+       Включает Service Task, обработку ошибки (Boundary Error Event),
+       цикл повторов (Retry, multiInstance/loop) и развилку результата.
+       Готов к импорту в Camunda 8 (Zeebe) / Storm BPMN.
+  ================================================================= -->
+  <bpmn:process id="Process_ShipmentCreation" name="Создание отгрузки у перевозчика" isExecutable="true">
+
+    <bpmn:startEvent id="StartEvent_1" name="Отгрузка готова к созданию">
+      <bpmn:outgoing>Flow_start_validate</bpmn:outgoing>
+    </bpmn:startEvent>
+
+    <bpmn:sequenceFlow id="Flow_start_validate" sourceRef="StartEvent_1" targetRef="Task_ValidateShipment" />
+
+    <bpmn:task id="Task_ValidateShipment" name="Проверить данные отгрузки">
+      <bpmn:incoming>Flow_start_validate</bpmn:incoming>
+      <bpmn:outgoing>Flow_validate_create</bpmn:outgoing>
+    </bpmn:task>
+
+    <bpmn:sequenceFlow id="Flow_validate_create" sourceRef="Task_ValidateShipment" targetRef="Task_CreateAtCarrier" />
+
+    <!-- Service Task с боковым событием ошибки и повторами -->
+    <bpmn:serviceTask id="Task_CreateAtCarrier" name="Создать заказ у перевозчика">
+      <bpmn:incoming>Flow_validate_create</bpmn:incoming>
+      <bpmn:incoming>Flow_retry_loop</bpmn:incoming>
+      <bpmn:outgoing>Flow_create_gateway</bpmn:outgoing>
+    </bpmn:serviceTask>
+
+    <!-- Граничное событие ошибки: недоступность API перевозчика -->
+    <bpmn:boundaryEvent id="Boundary_CarrierError" name="Сбой перевозчика" attachedToRef="Task_CreateAtCarrier">
+      <bpmn:outgoing>Flow_error_retrycheck</bpmn:outgoing>
+      <bpmn:errorEventDefinition id="ErrDef_1" errorRef="Error_CarrierUnavailable" />
+    </bpmn:boundaryEvent>
+
+    <bpmn:sequenceFlow id="Flow_error_retrycheck" sourceRef="Boundary_CarrierError" targetRef="Gateway_RetryCheck" />
+
+    <!-- Развилка: исчерпаны ли попытки -->
+    <bpmn:exclusiveGateway id="Gateway_RetryCheck" name="Попытки исчерпаны?">
+      <bpmn:incoming>Flow_error_retrycheck</bpmn:incoming>
+      <bpmn:outgoing>Flow_retry_wait</bpmn:outgoing>
+      <bpmn:outgoing>Flow_retry_failed</bpmn:outgoing>
+    </bpmn:exclusiveGateway>
+
+    <bpmn:sequenceFlow id="Flow_retry_wait" name="Нет (attempts &lt; 3)" sourceRef="Gateway_RetryCheck" targetRef="Task_BackoffWait">
+      <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">${attempts &lt; 3}</bpmn:conditionExpression>
+    </bpmn:sequenceFlow>
+
+    <!-- Таймер backoff между повторами -->
+    <bpmn:intermediateCatchEvent id="Task_BackoffWait" name="Экспоненциальный backoff">
+      <bpmn:incoming>Flow_retry_wait</bpmn:incoming>
+      <bpmn:outgoing>Flow_retry_loop</bpmn:outgoing>
+      <bpmn:timerEventDefinition id="Timer_1">
+        <bpmn:timeDuration xsi:type="bpmn:tFormalExpression">PT2S</bpmn:timeDuration>
+      </bpmn:timerEventDefinition>
+    </bpmn:intermediateCatchEvent>
+
+    <bpmn:sequenceFlow id="Flow_retry_loop" sourceRef="Task_BackoffWait" targetRef="Task_CreateAtCarrier" />
+
+    <bpmn:sequenceFlow id="Flow_retry_failed" name="Да (attempts = 3)" sourceRef="Gateway_RetryCheck" targetRef="Task_MarkFailed">
+      <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">${attempts &gt;= 3}</bpmn:conditionExpression>
+    </bpmn:sequenceFlow>
+
+    <bpmn:task id="Task_MarkFailed" name="Статус CREATION_FAILED + эскалация">
+      <bpmn:incoming>Flow_retry_failed</bpmn:incoming>
+      <bpmn:outgoing>Flow_failed_end</bpmn:outgoing>
+    </bpmn:task>
+
+    <bpmn:sequenceFlow id="Flow_failed_end" sourceRef="Task_MarkFailed" targetRef="EndEvent_Failed" />
+
+    <bpmn:endEvent id="EndEvent_Failed" name="Отгрузка не создана">
+      <bpmn:incoming>Flow_failed_end</bpmn:incoming>
+      <bpmn:errorEventDefinition id="ErrDef_End" errorRef="Error_CreationFailed" />
+    </bpmn:endEvent>
+
+    <!-- Ветка успеха -->
+    <bpmn:sequenceFlow id="Flow_create_gateway" sourceRef="Task_CreateAtCarrier" targetRef="Task_SaveTracking" />
+
+    <bpmn:task id="Task_SaveTracking" name="Сохранить трек-номер, статус CREATED">
+      <bpmn:incoming>Flow_create_gateway</bpmn:incoming>
+      <bpmn:outgoing>Flow_save_publish</bpmn:outgoing>
+    </bpmn:task>
+
+    <bpmn:sequenceFlow id="Flow_save_publish" sourceRef="Task_SaveTracking" targetRef="Task_PublishEvent" />
+
+    <bpmn:task id="Task_PublishEvent" name="Записать shipment.created в Outbox">
+      <bpmn:incoming>Flow_save_publish</bpmn:incoming>
+      <bpmn:outgoing>Flow_publish_end</bpmn:outgoing>
+    </bpmn:task>
+
+    <bpmn:sequenceFlow id="Flow_publish_end" sourceRef="Task_PublishEvent" targetRef="EndEvent_Success" />
+
+    <bpmn:endEvent id="EndEvent_Success" name="Отгрузка создана">
+      <bpmn:incoming>Flow_publish_end</bpmn:incoming>
+    </bpmn:endEvent>
+
+  </bpmn:process>
+
+  <bpmn:error id="Error_CarrierUnavailable" name="CarrierUnavailable" errorCode="CARRIER_UNAVAILABLE" />
+  <bpmn:error id="Error_CreationFailed" name="CreationFailed" errorCode="CREATION_FAILED" />
+
+  <!-- ================== Diagram Interchange (DI) ================== -->
+  <bpmndi:BPMNDiagram id="BPMNDiagram_1">
+    <bpmndi:BPMNPlane id="BPMNPlane_1" bpmnElement="Process_ShipmentCreation">
+
+      <bpmndi:BPMNShape id="Shape_StartEvent_1" bpmnElement="StartEvent_1">
+        <dc:Bounds x="150" y="200" width="36" height="36" />
+        <bpmndi:BPMNLabel><dc:Bounds x="130" y="243" width="80" height="27" /></bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+
+      <bpmndi:BPMNShape id="Shape_Task_ValidateShipment" bpmnElement="Task_ValidateShipment">
+        <dc:Bounds x="240" y="178" width="120" height="80" />
+      </bpmndi:BPMNShape>
+
+      <bpmndi:BPMNShape id="Shape_Task_CreateAtCarrier" bpmnElement="Task_CreateAtCarrier">
+        <dc:Bounds x="420" y="178" width="130" height="80" />
+      </bpmndi:BPMNShape>
+
+      <bpmndi:BPMNShape id="Shape_Boundary_CarrierError" bpmnElement="Boundary_CarrierError">
+        <dc:Bounds x="467" y="240" width="36" height="36" />
+        <bpmndi:BPMNLabel><dc:Bounds x="505" y="270" width="80" height="14" /></bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+
+      <bpmndi:BPMNShape id="Shape_Gateway_RetryCheck" bpmnElement="Gateway_RetryCheck" isMarkerVisible="true">
+        <dc:Bounds x="455" y="360" width="50" height="50" />
+        <bpmndi:BPMNLabel><dc:Bounds x="445" y="415" width="70" height="27" /></bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+
+      <bpmndi:BPMNShape id="Shape_Task_BackoffWait" bpmnElement="Task_BackoffWait">
+        <dc:Bounds x="312" y="367" width="36" height="36" />
+        <bpmndi:BPMNLabel><dc:Bounds x="295" y="405" width="80" height="27" /></bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+
+      <bpmndi:BPMNShape id="Shape_Task_MarkFailed" bpmnElement="Task_MarkFailed">
+        <dc:Bounds x="600" y="345" width="150" height="80" />
+      </bpmndi:BPMNShape>
+
+      <bpmndi:BPMNShape id="Shape_EndEvent_Failed" bpmnElement="EndEvent_Failed">
+        <dc:Bounds x="812" y="367" width="36" height="36" />
+        <bpmndi:BPMNLabel><dc:Bounds x="790" y="410" width="82" height="27" /></bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+
+      <bpmndi:BPMNShape id="Shape_Task_SaveTracking" bpmnElement="Task_SaveTracking">
+        <dc:Bounds x="600" y="178" width="150" height="80" />
+      </bpmndi:BPMNShape>
+
+      <bpmndi:BPMNShape id="Shape_Task_PublishEvent" bpmnElement="Task_PublishEvent">
+        <dc:Bounds x="800" y="178" width="160" height="80" />
+      </bpmndi:BPMNShape>
+
+      <bpmndi:BPMNShape id="Shape_EndEvent_Success" bpmnElement="EndEvent_Success">
+        <dc:Bounds x="1012" y="200" width="36" height="36" />
+        <bpmndi:BPMNLabel><dc:Bounds x="992" y="243" width="80" height="14" /></bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+
+      <bpmndi:BPMNEdge id="Edge_Flow_start_validate" bpmnElement="Flow_start_validate">
+        <di:waypoint x="186" y="218" /><di:waypoint x="240" y="218" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Edge_Flow_validate_create" bpmnElement="Flow_validate_create">
+        <di:waypoint x="360" y="218" /><di:waypoint x="420" y="218" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Edge_Flow_create_gateway" bpmnElement="Flow_create_gateway">
+        <di:waypoint x="550" y="218" /><di:waypoint x="600" y="218" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Edge_Flow_save_publish" bpmnElement="Flow_save_publish">
+        <di:waypoint x="750" y="218" /><di:waypoint x="800" y="218" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Edge_Flow_publish_end" bpmnElement="Flow_publish_end">
+        <di:waypoint x="960" y="218" /><di:waypoint x="1012" y="218" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Edge_Flow_error_retrycheck" bpmnElement="Flow_error_retrycheck">
+        <di:waypoint x="485" y="276" /><di:waypoint x="485" y="360" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Edge_Flow_retry_wait" bpmnElement="Flow_retry_wait">
+        <di:waypoint x="455" y="385" /><di:waypoint x="348" y="385" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Edge_Flow_retry_loop" bpmnElement="Flow_retry_loop">
+        <di:waypoint x="330" y="367" /><di:waypoint x="330" y="218" /><di:waypoint x="420" y="218" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Edge_Flow_retry_failed" bpmnElement="Flow_retry_failed">
+        <di:waypoint x="505" y="385" /><di:waypoint x="600" y="385" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Edge_Flow_failed_end" bpmnElement="Flow_failed_end">
+        <di:waypoint x="750" y="385" /><di:waypoint x="812" y="385" />
+      </bpmndi:BPMNEdge>
+
+    </bpmndi:BPMNPlane>
+  </bpmndi:BPMNDiagram>
+</bpmn:definitions>

@@ -1,0 +1,170 @@
+@startuml erd_delivery
+' =====================================================================
+'  ER-модель БД Delivery Orchestration Service (PostgreSQL 16).
+'  Нотация: crow's foot. PK — первичный ключ, FK — внешний ключ.
+'  Кардинальность подписана на связях (1:M, M:N через ассоциативную
+'  таблицу shipment_item).
+' =====================================================================
+title ERD — Delivery Orchestration Service (PostgreSQL)
+
+skinparam backgroundColor #FFFFFF
+skinparam shadowing false
+hide circle
+skinparam linetype ortho
+skinparam class {
+  BackgroundColor #EAF2FB
+  BorderColor #2C6FB5
+  ArrowColor #2C6FB5
+}
+
+entity "merchant" as merchant {
+  * id : UUID <<PK>>
+  --
+  * name : varchar(255)
+  * legal_inn : varchar(12)
+  * status : varchar(32)
+  * created_at : timestamptz
+}
+
+entity "warehouse" as warehouse {
+  * id : UUID <<PK>>
+  --
+  * merchant_id : UUID <<FK>>
+  * code : varchar(32)
+  * city : varchar(120)
+  * postal_code : varchar(12)
+  * address : text
+  * is_active : boolean
+}
+
+entity "carrier" as carrier {
+  * id : UUID <<PK>>
+  --
+  * code : varchar(32)   ' CDEK | BOXBERRY
+  * name : varchar(120)
+  * is_enabled : boolean
+  api_base_url : varchar(255)
+}
+
+entity "tariff" as tariff {
+  * id : UUID <<PK>>
+  --
+  * carrier_id : UUID <<FK>>
+  * delivery_method : varchar(24)  ' PVZ|COURIER|POSTAMAT
+  * from_zone : varchar(32)
+  * to_zone : varchar(32)
+  * base_cost : numeric(12,2)
+  * cost_per_kg : numeric(12,2)
+  * min_days : smallint
+  * max_days : smallint
+  * valid_from : timestamptz
+  * valid_to : timestamptz
+}
+
+entity "delivery_order" as delivery_order {
+  * id : UUID <<PK>>
+  --
+  * external_order_id : varchar(64)  ' id из order-service
+  * customer_id : UUID
+  * destination_city : varchar(120)
+  * destination_postal : varchar(12)
+  * destination_address : text
+  * total_cost : numeric(12,2)
+  * status : varchar(32)
+  * idempotency_key : varchar(64)
+  * created_at : timestamptz
+}
+
+entity "shipment" as shipment {
+  * id : UUID <<PK>>
+  --
+  * delivery_order_id : UUID <<FK>>
+  * merchant_id : UUID <<FK>>
+  * warehouse_id : UUID <<FK>>
+  * carrier_id : UUID <<FK>>
+  * tariff_id : UUID <<FK>>
+  * delivery_method : varchar(24)
+  * tracking_number : varchar(64)
+  * external_shipment_id : varchar(64)
+  * weight_grams : integer
+  * cost : numeric(12,2)
+  * status : varchar(32)
+  * created_at : timestamptz
+  * updated_at : timestamptz
+}
+
+entity "order_item" as order_item {
+  * id : UUID <<PK>>
+  --
+  * delivery_order_id : UUID <<FK>>
+  * merchant_id : UUID <<FK>>
+  * sku : varchar(64)
+  * title : varchar(255)
+  * quantity : integer
+  * weight_grams : integer
+  * length_mm : integer
+  * width_mm : integer
+  * height_mm : integer
+}
+
+entity "shipment_item" as shipment_item {
+  * shipment_id : UUID <<PK>> <<FK>>
+  * order_item_id : UUID <<PK>> <<FK>>
+  --
+  * quantity : integer
+}
+
+entity "shipment_status_history" as ssh {
+  * id : UUID <<PK>>
+  --
+  * shipment_id : UUID <<FK>>
+  * from_status : varchar(32)
+  * to_status : varchar(32)
+  * source : varchar(24)  ' WEBHOOK|API|SYSTEM
+  * carrier_event_id : varchar(64)
+  * changed_at : timestamptz
+}
+
+entity "webhook_event" as webhook_event {
+  * id : UUID <<PK>>
+  --
+  * carrier_id : UUID <<FK>>
+  * external_event_id : varchar(64)  ' UNIQUE (carrier_id, external_event_id)
+  * payload : jsonb
+  * received_at : timestamptz
+  * processed : boolean
+}
+
+entity "outbox_event" as outbox_event {
+  * id : UUID <<PK>>
+  --
+  * aggregate_type : varchar(48)
+  * aggregate_id : UUID
+  * event_type : varchar(64)
+  * payload : jsonb
+  * created_at : timestamptz
+  * published_at : timestamptz
+}
+
+' --------- связи и кардинальность ---------
+merchant       ||--o{ warehouse        : "1:M владеет"
+merchant       ||--o{ shipment          : "1:M отгружает"
+merchant       ||--o{ order_item        : "1:M продаёт"
+carrier        ||--o{ tariff            : "1:M имеет"
+carrier        ||--o{ shipment          : "1:M обслуживает"
+carrier        ||--o{ webhook_event     : "1:M шлёт"
+tariff         ||--o{ shipment          : "1:M применён к"
+warehouse      ||--o{ shipment          : "1:M отгружается со"
+delivery_order ||--|{ shipment          : "1:M разбит на"
+delivery_order ||--|{ order_item        : "1:M содержит"
+shipment       ||--o{ shipment_item     : "1:M включает"
+order_item     ||--o{ shipment_item     : "1:M распределён"
+shipment       ||--o{ ssh               : "1:M история"
+
+note bottom of shipment_item
+  Ассоциативная таблица: реализует
+  связь M:N между shipment и order_item
+  (позиция может делиться между отгрузками).
+end note
+
+@enduml
