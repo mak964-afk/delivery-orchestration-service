@@ -119,8 +119,11 @@ delivery-service/
 │   ├── sequence.puml             ← Sequence: отмена отгрузки + сбой перевозчика
 │   ├── erd.puml                  ← ER-модель БД (PK/FK, кардинальность)
 │   └── bpmn_core.xml             ← BPMN 2.0 XML подпроцесса (Camunda/Storm BPMN)
-└── api/
-    └── specification.yaml         ← OpenAPI 3.0: POST /delivery/calculate
+├── api/
+│   └── specification.yaml         ← OpenAPI 3.0: POST /delivery/calculate
+└── .github/
+    └── workflows/
+        └── render-diagrams.yml    ← CI: авто-рендер .puml → PNG/SVG при push
 ```
 
 ### Как читать проект
@@ -146,6 +149,62 @@ docker run --rm -v "$PWD/diagrams:/work" plantuml/plantuml -tsvg "/work/*.puml"
 # OpenAPI — валидация и просмотр
 npx @redocly/cli lint api/specification.yaml
 npx @redocly/cli preview-docs api/specification.yaml
+```
+
+---
+
+## 5. Диаграммы и автоматический рендеринг (CI)
+
+Все диаграммы написаны как код в PlantUML (`diagrams/*.puml`). GitHub **не**
+рендерит PlantUML нативно, поэтому в репозитории настроен GitHub Actions workflow
+[`.github/workflows/render-diagrams.yml`](.github/workflows/render-diagrams.yml):
+при каждом `push` с изменением `.puml` он автоматически перерисовывает схемы в
+SVG/PNG (в папку `diagrams/rendered/`) и коммитит их обратно. Это и есть
+**Docs-as-Code**: исходники схем и их картинки всегда синхронны, ручной экспорт
+не нужен.
+
+> Картинки ниже подтянутся автоматически **после первого запуска workflow**
+> (первый `push` в `main` либо ручной запуск во вкладке *Actions → Render
+> PlantUML Diagrams → Run workflow*). До этого момента ссылки на изображения
+> могут показывать «битую» иконку — это нормально.
+
+### Сквозной бизнес-процесс (BPMN)
+![BPMN — сквозной процесс доставки](diagrams/rendered/bpmn_delivery_end_to_end.png)
+
+### C4 — System Context
+![C4 System Context](diagrams/rendered/c4_delivery.png)
+
+### C4 — Container
+![C4 Container](diagrams/rendered/c4_delivery_container.png)
+
+### Sequence — отмена отгрузки при сбое перевозчика (Timeout + Retry + Circuit Breaker)
+![Sequence — отмена при сбое](diagrams/rendered/sequence_cancel_shipment_with_failure.png)
+
+### ER-модель данных
+![ERD](diagrams/rendered/erd_delivery.png)
+
+### Жизненный цикл отгрузки — Mermaid (рендерится на GitHub нативно)
+
+Эта диаграмма встроена прямо в Markdown и отображается на GitHub без какого-либо
+CI — пример того, как Mermaid дополняет PlantUML для «быстрых» схем:
+
+```mermaid
+stateDiagram-v2
+    [*] --> PENDING : сплит заказа
+    PENDING --> CREATED : заказ создан у перевозчика
+    PENDING --> CREATION_FAILED : ошибка создания
+    CREATION_FAILED --> CREATED : Retry с backoff успешен
+    CREATION_FAILED --> [*] : попытки исчерпаны (эскалация)
+    CREATED --> IN_TRANSIT : передано перевозчику
+    IN_TRANSIT --> READY_FOR_PICKUP : прибыло в ПВЗ
+    READY_FOR_PICKUP --> DELIVERED : выдано покупателю
+    IN_TRANSIT --> DELIVERED : курьерская доставка
+    CREATED --> CANCELLED : отмена (Circuit Breaker closed)
+    CREATED --> CANCELLATION_PENDING : запрос отмены (CB open)
+    IN_TRANSIT --> CANCELLATION_PENDING : запрос отмены (CB open)
+    CANCELLATION_PENDING --> CANCELLED : связь восстановлена, отмена подтверждена
+    DELIVERED --> [*]
+    CANCELLED --> [*]
 ```
 
 ---
