@@ -1,8 +1,6 @@
 # Delivery Orchestration Service (DOS)
 
 > Системный анализ и проектирование микросервиса доставки для маркетплейса.
-> Репозиторий ведётся в концепции **Docs as Code**: вся документация, требования и
-> диаграммы хранятся в Git, ревьюятся через Pull Request и рендерятся в CI.
 
 ![Status](https://img.shields.io/badge/status-design--ready-blue)
 ![Methodology](https://img.shields.io/badge/methodology-Docs--as--Code-green)
@@ -119,11 +117,8 @@ delivery-service/
 │   ├── sequence.puml             ← Sequence: отмена отгрузки + сбой перевозчика
 │   ├── erd.puml                  ← ER-модель БД (PK/FK, кардинальность)
 │   └── bpmn_core.xml             ← BPMN 2.0 XML подпроцесса (Camunda/Storm BPMN)
-├── api/
-│   └── specification.yaml         ← OpenAPI 3.0: POST /delivery/calculate
-└── .github/
-    └── workflows/
-        └── render-diagrams.yml    ← CI: авто-рендер .puml → PNG/SVG при push
+└── api/
+    └── specification.yaml         ← OpenAPI 3.0: POST /delivery/calculate
 ```
 
 ### Как читать проект
@@ -137,36 +132,11 @@ delivery-service/
    - `erd.puml` → модель данных.
 4. Контракт интеграции – в `api/specification.yaml`.
 
-### Как рендерить диаграммы
-
-```bash
-# PlantUML (требует Java + plantuml.jar или Docker-образ plantuml/plantuml)
-docker run --rm -v "$PWD/diagrams:/work" plantuml/plantuml -tsvg "/work/*.puml"
-
-# C4 использует подключаемую библиотеку C4-PlantUML через !include по URL –
-# при рендере нужен доступ в интернет (или замените URL на локальную копию).
-
-# OpenAPI – валидация и просмотр
-npx @redocly/cli lint api/specification.yaml
-npx @redocly/cli preview-docs api/specification.yaml
-```
-
 ---
 
-## 5. Диаграммы и автоматический рендеринг (CI)
+## 5. Диаграммы
 
-Все диаграммы написаны как код в PlantUML (`diagrams/*.puml`). GitHub **не**
-рендерит PlantUML нативно, поэтому в репозитории настроен GitHub Actions workflow
-[`.github/workflows/render-diagrams.yml`](.github/workflows/render-diagrams.yml):
-при каждом `push` с изменением `.puml` он автоматически перерисовывает схемы в
-SVG/PNG (в папку `diagrams/rendered/`) и коммитит их обратно. Это и есть
-**Docs-as-Code**: исходники схем и их картинки всегда синхронны, ручной экспорт
-не нужен.
-
-> Картинки ниже подтянутся автоматически **после первого запуска workflow**
-> (первый `push` в `main` либо ручной запуск во вкладке *Actions → Render
-> PlantUML Diagrams → Run workflow*). До этого момента ссылки на изображения
-> могут показывать «битую» иконку – это нормально.
+Ключевые схемы проекта – от бизнес-процесса к данным: сквозной процесс (BPMN), архитектура (C4: контекст и контейнеры), главный технический сценарий (Sequence), модель данных (ERD) и жизненный цикл отгрузки.
 
 ### Сквозной бизнес-процесс (BPMN)
 
