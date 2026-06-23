@@ -4,7 +4,7 @@
 '  с API перевозчика. Показаны таймаут, Retry с backoff, Circuit Breaker
 '  (OPEN -> HALF_OPEN -> CLOSED) и отложенная компенсация через очередь.
 ' =====================================================================
-title Sequence — Отмена отгрузки при сбое перевозчика (Timeout + Retry + Circuit Breaker)
+title Sequence – Отмена отгрузки при сбое перевозчика (Timeout + Retry + Circuit Breaker)
 
 skinparam backgroundColor #FFFFFF
 skinparam shadowing false

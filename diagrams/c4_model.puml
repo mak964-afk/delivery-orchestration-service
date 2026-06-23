@@ -9,9 +9,9 @@
 LAYOUT_WITH_LEGEND()
 
 ' =====================================================================
-'  УРОВЕНЬ 1 — SYSTEM CONTEXT
+'  УРОВЕНЬ 1 – SYSTEM CONTEXT
 ' =====================================================================
-title C4 Level 1 — System Context: Delivery Orchestration Service
+title C4 Level 1 – System Context: Delivery Orchestration Service
 
 Person(customer, "Покупатель", "Выбирает доставку, отслеживает и отменяет посылки")
 Person(merchant, "Продавец", "Задаёт склады и габариты, собирает отгрузки")
@@ -39,13 +39,13 @@ Rel(boxberry, dos, "Вебхуки статусов", "HTTPS")
 @enduml
 
 ' =====================================================================
-'  УРОВЕНЬ 2 — CONTAINER
+'  УРОВЕНЬ 2 – CONTAINER
 ' =====================================================================
 @startuml c4_delivery_container
 !include https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/master/C4_Container.puml
 
 LAYOUT_WITH_LEGEND()
-title C4 Level 2 — Container: внутри Delivery Orchestration Service
+title C4 Level 2 – Container: внутри Delivery Orchestration Service
 
 Person(customer, "Покупатель")
 System(order, "Order Service", "Внешний домен")

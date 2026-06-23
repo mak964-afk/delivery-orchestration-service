@@ -103,7 +103,7 @@ paths:
                             maxDays: 2
                     unavailableCarriers: []
                 degraded:
-                  summary: Boxberry недоступен — graceful degradation
+                  summary: Boxberry недоступен – graceful degradation
                   value:
                     requestId: "3a7b1f90-0000-4a00-9b00-c0ffeec0ffee"
                     shipmentGroups:

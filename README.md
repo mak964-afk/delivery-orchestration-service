@@ -64,26 +64,26 @@
 - Расчёт и удержание комиссии маркетплейса с продавца (домен `billing`).
 - Кабинет курьера и last-mile маршрутизация собственной курьерской службы.
 - Юридический документооборот с перевозчиками (EDI/договоры).
-- Уведомления покупателю (домен `notification-service` — DOS лишь публикует события).
+- Уведомления покупателю (домен `notification-service` – DOS лишь публикует события).
 
 ---
 
 ## 2. Архитектурный подход
 
-DOS — это **stateless микросервис** в составе доменной платформы маркетплейса,
+DOS – это **stateless микросервис** в составе доменной платформы маркетплейса,
 построенный по принципам **Domain-Driven Design** и **Event-Driven Architecture**.
 
-- **Стиль интеграции**: синхронный **REST API** (расчёт, оформление, отмена — для
+- **Стиль интеграции**: синхронный **REST API** (расчёт, оформление, отмена – для
   фронта и `order-service`) + асинхронный **обмен событиями** через брокер (Apache
   Kafka) для статусов и интеграции с другими доменами.
 - **Внешние перевозчики** скрыты за паттерном **Anti-Corruption Layer**: для каждого
-  перевозчика — свой адаптер (`cdek-adapter`, `boxberry-adapter`), реализующий единый
+  перевозчика – свой адаптер (`cdek-adapter`, `boxberry-adapter`), реализующий единый
   внутренний интерфейс `CarrierGateway`. Это позволяет добавлять перевозчиков без
   изменения доменного ядра.
 - **Отказоустойчивость**: вызовы внешних API обёрнуты в **Circuit Breaker + Retry с
   экспоненциальным backoff и идемпотентными ключами**. При «открытом» предохранителе
   расчёт деградирует на закэшированные тарифы (graceful degradation).
-- **Гарантии доставки событий**: паттерн **Transactional Outbox** — доменное событие
+- **Гарантии доставки событий**: паттерн **Transactional Outbox** – доменное событие
   пишется в БД в одной транзакции с изменением состояния, отдельный publisher вычитывает
   outbox и публикует в Kafka (at-least-once + идемпотентные консьюмеры).
 - **Идемпотентность вебхуков**: каждое входящее событие перевозчика дедуплицируется по
@@ -128,14 +128,14 @@ delivery-service/
 
 ### Как читать проект
 
-1. Начните с этого README — он задаёт контекст и границы.
-2. Перейдите в `requirements/` — что система должна делать и почему.
-3. Изучите `diagrams/` — как это устроено (от бизнес-процесса к данным):
+1. Начните с этого README – он задаёт контекст и границы.
+2. Перейдите в `requirements/` – что система должна делать и почему.
+3. Изучите `diagrams/` – как это устроено (от бизнес-процесса к данным):
    - `bpmn.puml` → процесс глазами бизнеса;
    - `c4_model.puml` → архитектура (контекст → контейнеры);
    - `sequence.puml` → самый сложный технический сценарий;
    - `erd.puml` → модель данных.
-4. Контракт интеграции — в `api/specification.yaml`.
+4. Контракт интеграции – в `api/specification.yaml`.
 
 ### Как рендерить диаграммы
 
@@ -143,10 +143,10 @@ delivery-service/
 # PlantUML (требует Java + plantuml.jar или Docker-образ plantuml/plantuml)
 docker run --rm -v "$PWD/diagrams:/work" plantuml/plantuml -tsvg "/work/*.puml"
 
-# C4 использует подключаемую библиотеку C4-PlantUML через !include по URL —
+# C4 использует подключаемую библиотеку C4-PlantUML через !include по URL –
 # при рендере нужен доступ в интернет (или замените URL на локальную копию).
 
-# OpenAPI — валидация и просмотр
+# OpenAPI – валидация и просмотр
 npx @redocly/cli lint api/specification.yaml
 npx @redocly/cli preview-docs api/specification.yaml
 ```
@@ -166,19 +166,19 @@ SVG/PNG (в папку `diagrams/rendered/`) и коммитит их обрат
 > Картинки ниже подтянутся автоматически **после первого запуска workflow**
 > (первый `push` в `main` либо ручной запуск во вкладке *Actions → Render
 > PlantUML Diagrams → Run workflow*). До этого момента ссылки на изображения
-> могут показывать «битую» иконку — это нормально.
+> могут показывать «битую» иконку – это нормально.
 
 ### Сквозной бизнес-процесс (BPMN)
-![BPMN — сквозной процесс доставки](diagrams/rendered/bpmn_delivery_end_to_end.png)
+![BPMN – сквозной процесс доставки](diagrams/rendered/bpmn_delivery_end_to_end.png)
 
-### C4 — System Context
+### C4 – System Context
 ![C4 System Context](diagrams/rendered/c4_delivery.png)
 
-### C4 — Container
+### C4 – Container
 ![C4 Container](diagrams/rendered/c4_delivery_container.png)
 
-### Sequence — отмена отгрузки при сбое перевозчика (Timeout + Retry + Circuit Breaker)
-![Sequence — отмена при сбое](diagrams/rendered/sequence_cancel_shipment_with_failure.png)
+### Sequence – отмена отгрузки при сбое перевозчика (Timeout + Retry + Circuit Breaker)
+![Sequence – отмена при сбое](diagrams/rendered/sequence_cancel_shipment_with_failure.png)
 
 ### ER-модель данных
 ![ERD](diagrams/rendered/erd_delivery.png)
@@ -222,7 +222,7 @@ stateDiagram-v2
 | **Carrier (Перевозчик)** | Внешняя логистическая компания (СДЭК, Boxberry). |
 | **Tariff (Тариф)** | Стоимость + срок доставки для конкретной комбинации откуда/куда/способ/габариты. |
 | **PVZ (ПВЗ)** | Пункт выдачи заказов. |
-| **ACL** | Anti-Corruption Layer — слой адаптеров, изолирующий доменное ядро от API перевозчиков. |
+| **ACL** | Anti-Corruption Layer – слой адаптеров, изолирующий доменное ядро от API перевозчиков. |
 | **Outbox** | Таблица исходящих событий для надёжной публикации в Kafka. |
 
 ---

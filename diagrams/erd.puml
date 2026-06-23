@@ -1,11 +1,11 @@
 @startuml erd_delivery
 ' =====================================================================
 '  ER-модель БД Delivery Orchestration Service (PostgreSQL 16).
-'  Нотация: crow's foot. PK — первичный ключ, FK — внешний ключ.
+'  Нотация: crow's foot. PK – первичный ключ, FK – внешний ключ.
 '  Кардинальность подписана на связях (1:M, M:N через ассоциативную
 '  таблицу shipment_item).
 ' =====================================================================
-title ERD — Delivery Orchestration Service (PostgreSQL)
+title ERD – Delivery Orchestration Service (PostgreSQL)
 
 skinparam backgroundColor #FFFFFF
 skinparam shadowing false
